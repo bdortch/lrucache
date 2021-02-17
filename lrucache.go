@@ -14,6 +14,7 @@ type LRUCache interface {
 	Capacity() int
 	TTLSeconds() int64
 	Clear()
+	Stop()
 }
 
 func New(capacity int) LRUCache {
@@ -31,7 +32,7 @@ func NewWithTTL(capacity int, ttlSeconds int64) LRUCache {
 		panic(fmt.Sprintf("invalid capacity: %d\n", capacity))
 	}
 	if ttlSeconds < 0 {
-		panic(fmt.Sprintf("invalid ttlMillis: %d\n", ttlSeconds))
+		panic(fmt.Sprintf("invalid ttlSeconds: %d\n", ttlSeconds))
 	}
 	c := &lrucache{
 		capacity:   capacity,
@@ -43,8 +44,32 @@ func NewWithTTL(capacity int, ttlSeconds int64) LRUCache {
 }
 
 func pruneExpiredEntries(c *lrucache) {
+	if c.ttlSeconds == 0 || c.stopped {
+		return
+	}
+	var stopped bool
 	for {
-		time.Sleep(100 * time.Millisecond)
+		if stopped {
+			return
+		}
+		time.Sleep(200 * time.Millisecond)
+		func() {
+			now := time.Now().Unix()
+			c.Lock()
+			defer c.Unlock()
+			if c.stopped {
+				stopped = true
+				return
+			}
+			for e := c.head; e != nil; {
+				next := e.next
+				if e.expireTime <= now {
+					c.unlink(e)
+					delete(c.hash, e.key)
+				}
+				e = next
+			}
+		}()
 	}
 }
 
@@ -60,6 +85,7 @@ type lrucache struct {
 	sync.Mutex
 	capacity   int
 	ttlSeconds int64
+	stopped    bool
 	head       *entry
 	tail       *entry
 	hash       map[interface{}]*entry
@@ -86,6 +112,9 @@ func (c *lrucache) Put(key, value interface{}) {
 	e := c.hash[key]
 	if e != nil {
 		e.value = value
+		if c.ttlSeconds > 0 {
+			e.expireTime = time.Now().Unix() + c.ttlSeconds
+		}
 		// move entry to head of list if not already there
 		if e != c.head {
 			c.unlink(e)
@@ -94,6 +123,9 @@ func (c *lrucache) Put(key, value interface{}) {
 		return
 	}
 	e = &entry{key: key, value: value}
+	if c.ttlSeconds > 0 {
+		e.expireTime = time.Now().Unix() + c.ttlSeconds
+	}
 	// insert new entry at head of list and in hash
 	c.prepend(e)
 	c.hash[key] = e
@@ -137,6 +169,12 @@ func (c *lrucache) Clear() {
 	c.head = nil
 	c.tail = nil
 	c.hash = make(map[interface{}]*entry)
+}
+
+func (c *lrucache) Stop() {
+	c.Lock()
+	defer c.Unlock()
+	c.stopped = true
 }
 
 // must be called under lock
