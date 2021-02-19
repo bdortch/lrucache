@@ -7,16 +7,36 @@ import (
 )
 
 type LRUCache interface {
+	// Get returns the value associated with the specified key,
+	// and promotes the entry to the head of the recenly used list.
+	// Returns nil if the key is not present in the cache.
 	Get(key interface{}) (value interface{})
+	// Put sets the value for the specified key, and promotes the
+	// entry to the head of the recently used list.
+	// If Put causes the cache to exceed its capacity, the least recently
+	// accessed entry is removed, i.e., the entry at the tail of the recently
+	// used list.
 	Put(key, value interface{})
+	// Remove removes the entry for the specified key, and returns
+	// the associated value, or nil if the key is not present in the cache.
 	Remove(key interface{}) (value interface{})
+	// Size returns the number of entries currently in the cache.
 	Size() int
+	// Capacity returns the maximum capacity of the cache.
 	Capacity() int
+	// TTLSeconds returns the TTL (time to live) value for the cache.
+	// A value of 0 indicates TTL support is disabled.
 	TTLSeconds() int64
+	// Clear removes all entries from the cache.
 	Clear()
+	// Stop terminates the goroutine used to purge expired entries when TTL
+	// is enabled. It has no effect if TTL is not enabled. It should be called
+	// if the cache is no longer in use prior to program termination.
 	Stop()
 }
 
+// New returns a new LRUCache instance with the specified capacity
+// and TTL support disabled. Panics if capacity <= 0.
 func New(capacity int) LRUCache {
 	if capacity <= 0 {
 		panic(fmt.Sprintf("invalid capacity: %d\n", capacity))
@@ -27,6 +47,9 @@ func New(capacity int) LRUCache {
 	}
 }
 
+// NewWithTTL returns a new LRUCache instance with the specified capacity
+// and ttlSeconds. Panics if capacity <= 0 or ttlSeconds < 0. A ttlSeconds
+// value of 0 disables TTL support.
 func NewWithTTL(capacity int, ttlSeconds int64) LRUCache {
 	if capacity <= 0 {
 		panic(fmt.Sprintf("invalid capacity: %d\n", capacity))
@@ -62,6 +85,7 @@ func pruneExpiredEntries(c *lrucache) {
 				return
 			}
 			for e := c.head; e != nil; {
+				// save next pointer, as unlink() will set to nil
 				next := e.next
 				if e.expireTime <= now {
 					c.unlink(e)
